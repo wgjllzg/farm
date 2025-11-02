@@ -1,0 +1,41 @@
+# IntelliJ IDEA / JetBrains IDE settings
+.idea/
+*.iml
+out/
+
+# Build output
+target/
+build/
+classes/
+
+# Maven wrapper caches
+.mvn/wrapper/maven-wrapper.jar
+.mvn/wrapper/maven-wrapper.properties
+!mvnw
+!mvnw.cmd
+
+# Logs and temporary files
+*.log
+*.tmp
+*.swp
+*.bak
+
+# OS-specific
+.DS_Store
+Thumbs.db
+
+# Generated files
+*.class
+*.jar
+*.war
+*.ear
+
+# JavaFX cache / runtime files (if any)
+*.hprof
+hs_err_pid*
+
+# Optional: VS Code, Eclipse project metadata
+.vscode/
+.project
+.classpath
+.settings/

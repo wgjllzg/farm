@@ -1,0 +1,85 @@
+/* Root background and layout */
+.farm-root {
+  -fx-padding: 16;
+  -fx-background-color: linear-gradient(#e8f5e9, #fffde7);
+}
+
+/* Coins/status label */
+.coins-label {
+  -fx-font-size: 14px;
+  -fx-font-weight: bold;
+  -fx-text-fill: #2e7d32;
+}
+
+/* Game board container */
+.game-board {
+  -fx-padding: 8;
+  -fx-hgap: 5;
+  -fx-vgap: 5;
+  -fx-background-color: rgba(255,255,255,0.6);
+  -fx-background-radius: 8;
+  -fx-border-color: rgba(46, 125, 50, 0.35);
+  -fx-border-radius: 8;
+}
+
+/* Common plot cell style */
+.plot-button {
+  -fx-font-size: 12px;
+  -fx-font-weight: 600;
+  -fx-background-radius: 8;
+  -fx-border-radius: 8;
+  -fx-border-width: 1;
+  -fx-border-color: rgba(0,0,0,0.15);
+}
+
+.plot-button:selected {
+  -fx-border-color: #1976d2;
+  -fx-border-width: 2;
+}
+
+/* States for plot cells */
+.plot-button.state-empty {
+  /* soil-like brown */
+  -fx-background-color: linear-gradient(#d7ccc8, #bcaaa4);
+  -fx-text-fill: #4e342e;
+}
+.plot-button.state-empty:hover {
+  -fx-background-color: linear-gradient(#e0d6d2, #c7b6b0);
+}
+
+.plot-button.state-growing {
+  /* young crop green */
+  -fx-background-color: linear-gradient(#c8e6c9, #a5d6a7);
+  -fx-text-fill: #1b5e20;
+}
+.plot-button.state-growing:hover {
+  -fx-background-color: linear-gradient(#d6edd7, #b4e1b6);
+}
+
+.plot-button.state-ripe {
+  /* harvest-ready golden */
+  -fx-background-color: linear-gradient(#ffe082, #ffd54f);
+  -fx-text-fill: #4e342e;
+}
+.plot-button.state-ripe:hover {
+  -fx-background-color: linear-gradient(#ffecb3, #ffe082);
+}
+
+/* Action buttons */
+.action-plant {
+  -fx-background-color: linear-gradient(#81c784, #66bb6a);
+  -fx-text-fill: white;
+}
+.action-plant:hover { -fx-background-color: linear-gradient(#90d290, #73c579); }
+
+.action-harvest {
+  -fx-background-color: linear-gradient(#ffd54f, #ffca28);
+  -fx-text-fill: #4e342e;
+}
+.action-harvest:hover { -fx-background-color: linear-gradient(#ffe082, #ffd54f); }
+
+.action-steal {
+  -fx-background-color: linear-gradient(#64b5f6, #42a5f5);
+  -fx-text-fill: white;
+}
+.action-steal:hover { -fx-background-color: linear-gradient(#74bdf9, #52adf8); }
