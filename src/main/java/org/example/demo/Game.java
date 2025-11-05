@@ -6,7 +6,8 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 
 /**
- * Minimal game logic to demonstrate multithreading and synchronization.
+ * 农场的最小逻辑模型：服务器端使用。
+ * 线程安全（大部分方法 synchronized），支持作物自动生长。
  */
 public class Game {
 
@@ -44,6 +45,9 @@ public class Game {
         return board[row][col];
     }
 
+    /**
+     * 服务器端：种植。线程安全。
+     */
     public synchronized void plant(int row, int col) {
         if (board[row][col] != PlotState.EMPTY) {
             throw new IllegalStateException("Plot occupied");
@@ -54,7 +58,7 @@ public class Game {
         coins -= PLANT_COST;
         board[row][col] = PlotState.GROWING;
 
-        // Simulate growth finishing after 5 seconds
+        // 模拟 5 秒后成熟
         scheduler.schedule(() -> {
             synchronized (Game.this) {
                 if (board[row][col] == PlotState.GROWING) {
@@ -64,6 +68,9 @@ public class Game {
         }, 5, TimeUnit.SECONDS);
     }
 
+    /**
+     * 服务器端：收获。线程安全。
+     */
     public synchronized void harvest(int row, int col) {
         if (board[row][col] != PlotState.RIPE) {
             throw new IllegalStateException("Crop not ripe");
@@ -72,9 +79,10 @@ public class Game {
         coins += HARVEST_REWARD;
     }
 
+    /**
+     * 服务器端：简单模拟被偷逻辑（可后续改成真正多玩家偷菜）。
+     */
     public synchronized void stealRandom() {
-        // Simple simulation of being stolen by another player
-        // TODO: replace this demo logic with server-driven stealing requests from other clients.
         int row = random.nextInt(ROWS);
         int col = random.nextInt(COLS);
         if (board[row][col] == PlotState.RIPE) {
@@ -89,6 +97,26 @@ public class Game {
 
     public int getCols() {
         return COLS;
+    }
+
+    /**
+     * 把当前状态编码成字符串：coins;rows;cols;cells
+     * cells 是按行展开的 16 个字符：E/G/R
+     */
+    public synchronized String encodeState() {
+        StringBuilder sb = new StringBuilder();
+        sb.append(coins).append(";").append(ROWS).append(";").append(COLS).append(";");
+        for (int r = 0; r < ROWS; r++) {
+            for (int c = 0; c < COLS; c++) {
+                char ch = switch (board[r][c]) {
+                    case EMPTY -> 'E';
+                    case GROWING -> 'G';
+                    case RIPE -> 'R';
+                };
+                sb.append(ch);
+            }
+        }
+        return sb.toString();
     }
 
     public void shutdown() {

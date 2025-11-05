@@ -5,8 +5,10 @@ import javafx.scene.Parent;
 import javafx.scene.Scene;
 import javafx.stage.Stage;
 
+import java.util.Random;
+
 /**
- * Entry point for the simplified QQ Farm demo.
+ * 客户端入口：启动 JavaFX，并与服务器建立连接。
  */
 public class Application extends javafx.application.Application {
 
@@ -16,11 +18,15 @@ public class Application extends javafx.application.Application {
         Parent root = loader.load();
 
         Controller controller = loader.getController();
-        controller.init(new Game());
-        // TODO: 在此处建立与服务器的真实连接，并把共享的 Game 状态换成网络同步模型。
+
+        // 简单起名：Player-随机数。需要的话你可以改成弹框输入用户名。
+        String playerName = "Player-" + new Random().nextInt(1000);
+
+        // 连接本机 5555 端口的服务器（先启动 FarmServer 再启动客户端）
+        controller.init("localhost", 5555, playerName);
 
         Scene scene = new Scene(root);
-        stage.setTitle("QQ Farm Demo");
+        stage.setTitle("QQ Farm Demo - " + playerName);
         stage.setScene(scene);
         stage.setOnCloseRequest(event -> controller.shutdown());
         stage.show();
