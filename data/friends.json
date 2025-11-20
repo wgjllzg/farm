@@ -1,0 +1,7 @@
+[ {
+  "playerId" : 1,
+  "friends" : [ 2 ]
+}, {
+  "playerId" : 2,
+  "friends" : [ 1 ]
+} ]

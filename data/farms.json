@@ -1,0 +1,107 @@
+[ {
+  "playerId" : 1,
+  "rows" : 4,
+  "cols" : 4,
+  "cells" : [ {
+    "state" : "EMPTY",
+    "ripeAt" : null
+  }, {
+    "state" : "EMPTY",
+    "ripeAt" : null
+  }, {
+    "state" : "EMPTY",
+    "ripeAt" : null
+  }, {
+    "state" : "EMPTY",
+    "ripeAt" : null
+  }, {
+    "state" : "EMPTY",
+    "ripeAt" : null
+  }, {
+    "state" : "EMPTY",
+    "ripeAt" : null
+  }, {
+    "state" : "EMPTY",
+    "ripeAt" : null
+  }, {
+    "state" : "EMPTY",
+    "ripeAt" : null
+  }, {
+    "state" : "EMPTY",
+    "ripeAt" : null
+  }, {
+    "state" : "EMPTY",
+    "ripeAt" : null
+  }, {
+    "state" : "EMPTY",
+    "ripeAt" : null
+  }, {
+    "state" : "EMPTY",
+    "ripeAt" : null
+  }, {
+    "state" : "EMPTY",
+    "ripeAt" : null
+  }, {
+    "state" : "EMPTY",
+    "ripeAt" : null
+  }, {
+    "state" : "EMPTY",
+    "ripeAt" : null
+  }, {
+    "state" : "EMPTY",
+    "ripeAt" : null
+  } ]
+}, {
+  "playerId" : 2,
+  "rows" : 4,
+  "cols" : 4,
+  "cells" : [ {
+    "state" : "EMPTY",
+    "ripeAt" : null
+  }, {
+    "state" : "EMPTY",
+    "ripeAt" : null
+  }, {
+    "state" : "EMPTY",
+    "ripeAt" : null
+  }, {
+    "state" : "EMPTY",
+    "ripeAt" : null
+  }, {
+    "state" : "EMPTY",
+    "ripeAt" : null
+  }, {
+    "state" : "EMPTY",
+    "ripeAt" : null
+  }, {
+    "state" : "EMPTY",
+    "ripeAt" : null
+  }, {
+    "state" : "EMPTY",
+    "ripeAt" : null
+  }, {
+    "state" : "EMPTY",
+    "ripeAt" : null
+  }, {
+    "state" : "EMPTY",
+    "ripeAt" : null
+  }, {
+    "state" : "EMPTY",
+    "ripeAt" : null
+  }, {
+    "state" : "EMPTY",
+    "ripeAt" : null
+  }, {
+    "state" : "EMPTY",
+    "ripeAt" : null
+  }, {
+    "state" : "EMPTY",
+    "ripeAt" : null
+  }, {
+    "state" : "EMPTY",
+    "ripeAt" : null
+  }, {
+    "state" : "EMPTY",
+    "ripeAt" : null
+  } ]
+} ]
