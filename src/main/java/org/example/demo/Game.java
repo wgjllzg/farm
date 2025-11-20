@@ -1,35 +1,20 @@
 package org.example.demo;
 
-import java.util.Random;
-import java.util.concurrent.Executors;
-import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.TimeUnit;
-
-/**
- * 农场的最小逻辑模型：服务器端使用。
- * 线程安全（大部分方法 synchronized），支持作物自动生长。
- */
+/** 纯视图缓存：不再本地推进生长或修改金币，一切以服务端为准。 */
 public class Game {
 
     public enum PlotState {EMPTY, GROWING, RIPE}
 
     private static final int ROWS = 4;
     private static final int COLS = 4;
-    private static final int PLANT_COST = 5;
-    private static final int HARVEST_REWARD = 12;
-    private static final int STEAL_REWARD = 4;
 
+    private final Player player;
     private final PlotState[][] board = new PlotState[ROWS][COLS];
-    private final ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(1, runnable -> {
-        Thread thread = new Thread(runnable, "crop-growth");
-        thread.setDaemon(true);
-        return thread;
-    });
-    private final Random random = new Random();
+    private int coins;
 
-    private int coins = 40;
-
-    public Game() {
+    public Game(Player player) {
+        this.player = player;
+        this.coins = player.getCoins();
         for (int r = 0; r < ROWS; r++) {
             for (int c = 0; c < COLS; c++) {
                 board[r][c] = PlotState.EMPTY;
@@ -37,89 +22,51 @@ public class Game {
         }
     }
 
-    public synchronized int getCoins() {
-        return coins;
+    public synchronized int getCoins() { return coins; }
+
+    public synchronized void setCoinsFromServer(int newCoins) {
+        this.coins = newCoins;
+        // 顺便同步 Player 实例，便于其它地方直接用 player.getCoins()
+        player.setCoins(newCoins);
     }
 
-    public synchronized PlotState getState(int row, int col) {
-        return board[row][col];
+    public synchronized PlotState getState(int row, int col) { return board[row][col]; }
+
+    public synchronized void setCellState(int row, int col, PlotState st) {
+        board[row][col] = st;
     }
+
+    public int getRows() { return ROWS; }
+
+    public int getCols() { return COLS; }
+
+    public Player getPlayer() { return player; }
 
     /**
-     * 服务器端：种植。线程安全。
+     * 全量快照应用（登录成功或 GET_FARM 之后调用）。
+     * rows/cols 来自服务端，目前总是 4x4，这里做一下安全裁剪。
      */
-    public synchronized void plant(int row, int col) {
-        if (board[row][col] != PlotState.EMPTY) {
-            throw new IllegalStateException("Plot occupied");
-        }
-        if (coins < PLANT_COST) {
-            throw new IllegalStateException("Not enough coins");
-        }
-        coins -= PLANT_COST;
-        board[row][col] = PlotState.GROWING;
+    public synchronized void applySnapshot(int rows, int cols, String[] cells, int coins) {
+        int idx = 0;
+        int maxRows = Math.min(rows, ROWS);
+        int maxCols = Math.min(cols, COLS);
 
-        // 模拟 5 秒后成熟
-        scheduler.schedule(() -> {
-            synchronized (Game.this) {
-                if (board[row][col] == PlotState.GROWING) {
-                    board[row][col] = PlotState.RIPE;
+        for (int r = 0; r < maxRows; r++) {
+            for (int c = 0; c < maxCols; c++) {
+                PlotState st = PlotState.EMPTY;
+                if (idx < cells.length && cells[idx] != null) {
+                    st = PlotState.valueOf(cells[idx]);
                 }
-            }
-        }, 5, TimeUnit.SECONDS);
-    }
-
-    /**
-     * 服务器端：收获。线程安全。
-     */
-    public synchronized void harvest(int row, int col) {
-        if (board[row][col] != PlotState.RIPE) {
-            throw new IllegalStateException("Crop not ripe");
-        }
-        board[row][col] = PlotState.EMPTY;
-        coins += HARVEST_REWARD;
-    }
-
-    /**
-     * 服务器端：简单模拟被偷逻辑（可后续改成真正多玩家偷菜）。
-     */
-    public synchronized void stealRandom() {
-        int row = random.nextInt(ROWS);
-        int col = random.nextInt(COLS);
-        if (board[row][col] == PlotState.RIPE) {
-            board[row][col] = PlotState.EMPTY;
-            coins = Math.max(0, coins - STEAL_REWARD);
-        }
-    }
-
-    public int getRows() {
-        return ROWS;
-    }
-
-    public int getCols() {
-        return COLS;
-    }
-
-    /**
-     * 把当前状态编码成字符串：coins;rows;cols;cells
-     * cells 是按行展开的 16 个字符：E/G/R
-     */
-    public synchronized String encodeState() {
-        StringBuilder sb = new StringBuilder();
-        sb.append(coins).append(";").append(ROWS).append(";").append(COLS).append(";");
-        for (int r = 0; r < ROWS; r++) {
-            for (int c = 0; c < COLS; c++) {
-                char ch = switch (board[r][c]) {
-                    case EMPTY -> 'E';
-                    case GROWING -> 'G';
-                    case RIPE -> 'R';
-                };
-                sb.append(ch);
+                board[r][c] = st;
+                idx++;
             }
         }
-        return sb.toString();
+        // 超出 rows/cols 的格子保持默认 EMPTY 即可
+
+        setCoinsFromServer(coins);
     }
 
     public void shutdown() {
-        scheduler.shutdownNow();
+        // 目前没有资源需要释放，预留
     }
 }

@@ -11,6 +11,12 @@
   -fx-text-fill: #2e7d32;
 }
 
+.player-label {
+    -fx-font-size: 14px;
+    -fx-font-weight: bold;
+    -fx-text-fill: #2e7d32;
+}
+
 /* Game board container */
 .game-board {
   -fx-padding: 8;
@@ -83,3 +89,16 @@
   -fx-text-fill: white;
 }
 .action-steal:hover { -fx-background-color: linear-gradient(#74bdf9, #52adf8); }
+
+.friends-pane {
+    -fx-background-color: rgba(0,0,0,0.03);
+    -fx-background-radius: 12;
+    -fx-border-color: #dfe6e9;
+    -fx-border-radius: 12;
+}
+
+.friends-title {
+    -fx-font-size: 14px;
+    -fx-font-weight: bold;
+}
+

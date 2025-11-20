@@ -1,27 +1,78 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<?import javafx.scene.control.Button?>
-<?import javafx.scene.control.Label?>
-<?import javafx.scene.layout.GridPane?>
-<?import javafx.scene.layout.HBox?>
-<?import javafx.scene.layout.VBox?>
 
-<?import java.net.URL?>
-<VBox xmlns="http://javafx.com/javafx/11.0.1" xmlns:fx="http://javafx.com/fxml" fx:controller="org.example.demo.Controller" spacing="10" styleClass="farm-root">
-  <stylesheets>
-    <URL value="@styles.css" />
-  </stylesheets>
-  <!-- Top status bar: coins + status message -->
-  <HBox spacing="10" alignment="CENTER_LEFT">
-    <Label fx:id="coinsLabel" text="Coins: 0 | Ready." styleClass="coins-label" />
-  </HBox>
+<?import javafx.geometry.Insets?>
+<?import javafx.scene.control.*?>
+<?import javafx.scene.layout.*?>
 
-  <!-- Game board grid (cells created by Controller) -->
-  <GridPane fx:id="gameBoard" VBox.vgrow="ALWAYS" hgap="5" vgap="5" styleClass="game-board" />
+<VBox xmlns="http://javafx.com/javafx/17" xmlns:fx="http://javafx.com/fxml/1"
+      fx:controller="org.example.demo.Controller"
+      spacing="10" stylesheets="@styles.css">
 
-  <!-- Action buttons -->
-  <HBox spacing="10" alignment="CENTER">
-    <Button fx:id="plantButton" text="Plant" onAction="#handlePlant" styleClass="button action-plant" />
-    <Button fx:id="harvestButton" text="Harvest" onAction="#handleHarvest" styleClass="button action-harvest" />
-    <Button fx:id="stealButton" text="Steal" onAction="#handleSteal" styleClass="button action-steal" />
-  </HBox>
+    <!-- 顶部信息 -->
+    <HBox spacing="8" alignment="CENTER_LEFT">
+        <padding><Insets top="12" right="12" bottom="12" left="12"/></padding>
+        <children>
+            <VBox spacing="4" alignment="CENTER_LEFT">
+                <children>
+                    <Label fx:id="playerNameLabel" text="Player: -" styleClass="player-label"/>
+                    <Label fx:id="playerIdLabel"   text="ID: -"      styleClass="player-label"/>
+                    <Label fx:id="coinsLabel"      text="Coins: 0 | Ready." styleClass="coins-label"/>
+                </children>
+            </VBox>
+        </children>
+    </HBox>
+
+    <!-- 主区：左侧游戏 / 右侧好友（固定显示） -->
+    <HBox spacing="12" alignment="TOP_LEFT" VBox.vgrow="ALWAYS">
+        <padding><Insets top="10" right="10" bottom="10" left="10"/></padding>
+        <children>
+
+            <!-- 左侧：棋盘 + 操作按钮 -->
+            <VBox spacing="12" alignment="TOP_LEFT" HBox.hgrow="ALWAYS">
+                <children>
+                    <Pane styleClass="board-container">
+                        <children>
+                            <GridPane fx:id="gameBoard" hgap="14" vgap="14">
+                                <padding><Insets top="20" right="20" bottom="20" left="20"/></padding>
+                            </GridPane>
+                        </children>
+                    </Pane>
+                    <HBox spacing="14" alignment="CENTER">
+                        <children>
+                            <Button fx:id="plantButton"   text="Plant"   onAction="#handlePlant"/>
+                            <Button fx:id="harvestButton" text="Harvest" onAction="#handleHarvest"/>
+                            <Button fx:id="stealButton"   text="Steal"   onAction="#handleSteal"/>
+                        </children>
+                    </HBox>
+                </children>
+            </VBox>
+
+            <!-- 右侧：固定好友面板 -->
+            <VBox fx:id="friendsPane" spacing="8" alignment="TOP_LEFT"
+                  prefWidth="300" minWidth="260" maxWidth="420"
+                  styleClass="friends-pane">
+                <padding><Insets top="12" right="12" bottom="12" left="12"/></padding>
+                <children>
+                    <Label text="Friends" styleClass="friends-title"/>
+
+                    <!-- 搜索添加 -->
+                    <!-- 搜索添加 -->
+                    <HBox spacing="6">
+                        <children>
+                            <TextField fx:id="friendSearchField" promptText="Enter player ID"/>
+                            <Button fx:id="friendAddButton"
+                                    text="Add"
+                                    disable="true"
+                                    onAction="#handleAddFriend"/>
+                        </children>
+                    </HBox>
+
+
+                    <!-- 列表（自带滚动条），占满剩余空间 -->
+                    <ListView fx:id="friendsList" VBox.vgrow="ALWAYS"/>
+                </children>
+            </VBox>
+
+        </children>
+    </HBox>
 </VBox>
