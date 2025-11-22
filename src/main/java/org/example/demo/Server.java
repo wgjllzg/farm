@@ -17,7 +17,10 @@ import java.util.concurrent.atomic.AtomicInteger;
 public class Server {
 
     // ===== 协议与模型 =====
-    public enum ReqType { LOGIN, SIGNUP, PLANT, HARVEST, PING, ADD_FRIEND, LIST_FRIENDS, VISIT_FARM }
+    public enum ReqType {
+        LOGIN, SIGNUP, PLANT, HARVEST, PING,
+        ADD_FRIEND, LIST_FRIENDS, VISIT_FARM, STEAL
+    }
     public enum PlotState { EMPTY, GROWING, RIPE }
 
     /** 统一响应外壳（同一条长连上的 request/response） */
@@ -29,7 +32,7 @@ public class Server {
 
         // 通用字段
         public Integer playerId;     // 发起请求的人
-        public Integer coins;        // 一般返回“自己的金币”
+        public Integer coins;        // 一般返回“自己的金币”（发起者）
         public String session;
         public String playerName;
 
@@ -49,15 +52,20 @@ public class Server {
         // 访问农场相关
         public Integer targetId;
         public String targetName;
+        public Boolean ownerOnline;     // 农场主是否在线
+        public Boolean canSteal;        // 这一轮还有没有偷菜额度
+
+        // 偷菜响应可选字段（农场主剩余金币）
+        public Integer ownerCoins;
     }
 
-    /** 主动推送：单格更新（成熟/收获/播种） */
+    /** 主动推送：单格更新（成熟/收获/播种/被偷） */
     static class PushCellUpdate {
         public String type = "PUSH_CELL_UPDATE";
-        public Integer playerId;     // 农场主人 id（很重要）
+        public Integer playerId;     // 农场主人 id
         public Integer row, col;
         public String plotState;     // EMPTY/GROWING/RIPE
-        public Integer coins;        // 农场主自己的金币（用于本人更新）
+        public Integer coins;        // 农场主自己的金币
 
         public PushCellUpdate() {}
         public PushCellUpdate(int ownerId, int r, int c, PlotState ps, int coins){
@@ -97,13 +105,18 @@ public class Server {
     /** playerId -> 长连连接，用于主动推送 */
     private final Map<Integer, ClientConn> conns = new ConcurrentHashMap<>();
 
-    /** 好友关系：playerId -> 好友 id 集合 */
+    /** 好友关系：playerId -> 好友 id 集合（对称） */
     private final Map<Integer, Set<Integer>> friends = new ConcurrentHashMap<>();
 
     /** 观众关系：ownerId -> 当前正在看这个人农场的 viewerId 集合（不含本人） */
     private final Map<Integer, Set<Integer>> viewersByOwner = new ConcurrentHashMap<>();
     /** viewerId -> 当前正在看的 ownerId（可以是自己或别人） */
     private final Map<Integer, Integer> currentViewByViewer = new ConcurrentHashMap<>();
+
+    /** 偷菜配额状态（每个 ownerId） */
+    private final Map<Integer, Integer> baselineRipe = new ConcurrentHashMap<>();
+    private final Map<Integer, Integer> allowedSteals = new ConcurrentHashMap<>();
+    private final Map<Integer, Integer> stolenSoFar   = new ConcurrentHashMap<>();
 
     private final AtomicInteger nextId = new AtomicInteger(1);
 
@@ -156,7 +169,6 @@ public class Server {
                 line = line.trim();
                 if (line.isEmpty()) continue;
 
-                // —— 日志：收到原始指令 ——
                 System.out.println("[RECV] " + line);
 
                 JsonNode node = mapper.readTree(line);
@@ -218,7 +230,7 @@ public class Server {
                         }
                     }
                     case PLANT -> {
-                        Integer pid = optInt(node, "playerId"); // 目前仍信任该字段
+                        Integer pid = optInt(node, "playerId");
                         Integer row = optInt(node, "row");
                         Integer col = optInt(node, "col");
                         resp = doPlant(pid, row, col);
@@ -263,6 +275,17 @@ public class Server {
                         safeWrite(out, outJson);
                         System.out.println("[SEND] " + outJson);
                     }
+                    case STEAL -> {
+                        Integer pid = optInt(node, "playerId");
+                        Integer targetId = optInt(node, "targetId");
+                        Integer row = optInt(node, "row");
+                        Integer col = optInt(node, "col");
+                        resp = doSteal(pid, targetId, row, col);
+                        resp.requestId = requestId;
+                        String outJson = mapper.writeValueAsString(resp);
+                        safeWrite(out, outJson);
+                        System.out.println("[SEND] " + outJson);
+                    }
                 }
             }
             System.out.println("[INFO] client closed");
@@ -289,6 +312,9 @@ public class Server {
     }
 
     private void bindConn(int playerId, ClientConn conn) {
+        // 主人重新上线：重置偷菜状态
+        resetStealState(playerId);
+
         ClientConn old = conns.put(playerId, conn);
         conn.playerId = playerId;
         if (old != null) {
@@ -311,7 +337,6 @@ public class Server {
         created.setId(nextId.getAndIncrement());
         created.setName(username);
         created.setCoins(100);
-        // 简化：密码明文存
         try {
             var pwdField = Player.class.getDeclaredField("password");
             pwdField.setAccessible(true);
@@ -358,6 +383,7 @@ public class Server {
         return r;
     }
 
+    /** PLANT：广播 GROWING 给所有正在看该农场的人 */
     private RespShell doPlant(Integer playerId, Integer row, Integer col) {
         RespShell r = new RespShell();
         if (playerId==null || row==null || col==null) { r.ok=false; r.msg="bad request"; return r; }
@@ -371,14 +397,12 @@ public class Server {
             if (f.board[row][col] != PlotState.EMPTY) { r.ok=false; r.msg="plot occupied"; return r; }
             if (p.getCoins() < 10) { r.ok=false; r.msg="not enough coins"; return r; }
 
-            // 1. 扣钱 + 本地改成 GROWING
             p.setCoins(p.getCoins() - 10);
             f.board[row][col] = PlotState.GROWING;
             long now = System.currentTimeMillis();
             long ripetime = now + 5000;
             f.ripeAt[row][col] = ripetime;
 
-            // 2. 挂成熟定时器（成熟时会广播 RIPE）
             final int rr=row, cc=col, pid=playerId;
             scheduler.schedule(() -> {
                 Farm ff = farms.get(pid);
@@ -388,22 +412,19 @@ public class Server {
                     if (ff.board[rr][cc] == PlotState.GROWING) {
                         ff.board[rr][cc] = PlotState.RIPE;
                         ff.ripeAt[rr][cc] = null;
-                        // 成熟时广播 RIPE
                         broadcastFarmUpdate(pid, new PushCellUpdate(pid, rr, cc, PlotState.RIPE, pp.getCoins()));
                         saveFarmsAsync();
                     }
                 }
             }, ripetime - now, TimeUnit.MILLISECONDS);
 
-            // 3. 持久化
-            savePlayersAsync(); // 扣钱
-            saveFarmsAsync();   // 改状态 + 记录 ripeAt
+            savePlayersAsync();
+            saveFarmsAsync();
 
-            // ✅ 4. 立刻广播 GROWING 给所有 viewer（包括本人）
+            // 立刻广播 GROWING
             broadcastFarmUpdate(playerId,
                     new PushCellUpdate(playerId, row, col, PlotState.GROWING, p.getCoins()));
 
-            // 5. 给发起者的 RESP（照旧）
             r.ok = true; r.msg="plant ok";
             r.playerId = playerId; r.row=row; r.col=col;
             r.plotState=PlotState.GROWING.name(); r.coins=p.getCoins();
@@ -427,6 +448,11 @@ public class Server {
             f.ripeAt[row][col] = null;
             p.setCoins(p.getCoins() + 20);
 
+            // 如果没有任何 RIPE 了，重置偷菜配额
+            if (countRipe(f) == 0) {
+                resetStealState(playerId);
+            }
+
             savePlayersAsync();
             saveFarmsAsync();
 
@@ -434,7 +460,8 @@ public class Server {
             r.playerId=playerId; r.row=row; r.col=col;
             r.plotState=PlotState.EMPTY.name(); r.coins=p.getCoins();
 
-            broadcastFarmUpdate(playerId, new PushCellUpdate(playerId, row, col, PlotState.EMPTY, p.getCoins()));
+            broadcastFarmUpdate(playerId,
+                    new PushCellUpdate(playerId, row, col, PlotState.EMPTY, p.getCoins()));
             return r;
         }
     }
@@ -521,6 +548,12 @@ public class Server {
         r.playerId = playerId;
         r.targetId = targetId;
         r.targetName = owner.getName();
+
+        boolean online = conns.containsKey(targetId);
+        r.ownerOnline = online;
+        // 有偷菜额度：必须离线且 hasStealQuota 返回 true
+        r.canSteal = !online && hasStealQuota(targetId);
+
         if (Objects.equals(playerId, targetId)) {
             r.coins = viewer.getCoins(); // 回到自己农场时返回自己的金币
         }
@@ -555,6 +588,164 @@ public class Server {
         return list;
     }
 
+    // ===== 偷菜逻辑（<4 不能偷 + 上线重置配额） =====
+    private RespShell doSteal(Integer thiefId, Integer ownerId, Integer row, Integer col) {
+        RespShell r = new RespShell();
+        if (thiefId == null || ownerId == null || row == null || col == null) {
+            r.ok = false; r.msg = "bad request"; return r;
+        }
+        if (Objects.equals(thiefId, ownerId)) {
+            r.ok = false; r.msg = "cannot steal from yourself"; return r;
+        }
+
+        Player thief = playersById.get(thiefId);
+        Player owner = playersById.get(ownerId);
+        if (thief == null || owner == null) {
+            r.ok = false; r.msg = "no such player"; return r;
+        }
+
+        // 必须是好友
+        Set<Integer> myFriends = friends.getOrDefault(thiefId, Collections.emptySet());
+        if (!myFriends.contains(ownerId)) {
+            r.ok = false; r.msg = "not friends"; return r;
+        }
+
+        // 农场主必须离线
+        if (conns.containsKey(ownerId)) {
+            r.ok = false; r.msg = "owner online, cannot steal"; return r;
+        }
+
+        farms.putIfAbsent(ownerId, new Farm());
+        Farm f = farms.get(ownerId);
+
+        synchronized (f) {
+            if (outOfRange(f, row, col)) {
+                r.ok = false; r.msg = "out of range"; return r;
+            }
+
+            int ripeCount = countRipe(f);
+            if (ripeCount == 0) {
+                // 没有成熟的地块，重置偷菜状态
+                resetStealState(ownerId);
+                r.ok = false; r.msg = "no ripe plots to steal"; return r;
+            }
+
+            // 新规则：成熟地块 < 4 时，整块农场不能被偷
+            if (ripeCount < 4) {
+                resetStealState(ownerId); // 保守起见清空一下状态
+                r.ok = false; r.msg = "not enough ripe plots to steal (need at least 4)"; return r;
+            }
+
+            Integer baseline = baselineRipe.get(ownerId);
+            Integer allowed  = allowedSteals.get(ownerId);
+            Integer stolen   = stolenSoFar.get(ownerId);
+
+            // 这一轮第一次偷：以当前 ripeCount 作为基准
+            if (baseline == null || allowed == null || stolen == null) {
+                baseline = ripeCount;
+                // allowed = floor(baseline * 25%)，baseline>=4 时至少 1
+                allowed = baseline / 4;
+                if (allowed <= 0) {
+                    // 理论上不会触发（前面已经保证 ripeCount>=4），防御一下
+                    r.ok = false; r.msg = "not enough ripe plots to steal"; return r;
+                }
+                stolen = 0;
+                baselineRipe.put(ownerId, baseline);
+                allowedSteals.put(ownerId, allowed);
+                stolenSoFar.put(ownerId, stolen);
+            }
+
+            if (stolen >= allowed) {
+                r.ok = false; r.msg = "farm already stolen up to 25%"; return r;
+            }
+
+            if (f.board[row][col] != PlotState.RIPE) {
+                r.ok = false; r.msg = "this plot is not ripe"; return r;
+            }
+
+            // 真正偷：把该格子从 RIPE -> EMPTY
+            f.board[row][col] = PlotState.EMPTY;
+            f.ripeAt[row][col] = null;
+
+            // 简单设定：偷一块地就获得 20 金币，对方损失 20 金币
+            thief.setCoins(thief.getCoins() + 20);
+            owner.setCoins(Math.max(0, owner.getCoins() - 20));
+
+            stolen = stolen + 1;
+            stolenSoFar.put(ownerId, stolen);
+
+            // 如果这个农场再也没有 RIPE 了，认为这一轮结束，重置偷菜状态
+            if (countRipe(f) == 0) {
+                resetStealState(ownerId);
+            }
+
+            savePlayersAsync();
+            saveFarmsAsync();
+
+            // 响应：返回盗贼自己的金币
+            r.ok = true; r.msg = "steal ok";
+            r.playerId = thiefId;
+            r.targetId = ownerId;
+            r.row = row; r.col = col;
+            r.plotState = PlotState.EMPTY.name();
+            r.coins = thief.getCoins();
+            r.ownerCoins = owner.getCoins();
+
+            // 偷完之后这一轮是否还可继续偷
+            Integer a2 = allowedSteals.get(ownerId);
+            Integer s2 = stolenSoFar.get(ownerId);
+            boolean canStealMore = false;
+            if (a2 != null && s2 != null) {
+                canStealMore = s2 < a2;
+            }
+            r.canSteal = canStealMore;
+
+            // 广播这块地变 EMPTY 给所有正在看该农场的人
+            broadcastFarmUpdate(ownerId,
+                    new PushCellUpdate(ownerId, row, col, PlotState.EMPTY, owner.getCoins()));
+
+            return r;
+        }
+    }
+
+    private int countRipe(Farm f) {
+        int cnt = 0;
+        for (int r=0;r<f.rows;r++) {
+            for (int c=0;c<f.cols;c++) {
+                if (f.board[r][c] == PlotState.RIPE) cnt++;
+            }
+        }
+        return cnt;
+    }
+
+    private void resetStealState(int ownerId) {
+        baselineRipe.remove(ownerId);
+        allowedSteals.remove(ownerId);
+        stolenSoFar.remove(ownerId);
+    }
+
+    /** 是否还有偷菜额度（仅用来给 VISIT_FARM 返回 canSteal，用不到 baseline 的初始化） */
+    private boolean hasStealQuota(int ownerId) {
+        Farm f = farms.get(ownerId);
+        if (f == null) return false;
+        synchronized (f) {
+            int ripe = countRipe(f);
+            if (ripe < 4) {
+                // 成熟数 < 4，一律不能偷，同时重置状态
+                resetStealState(ownerId);
+                return false;
+            }
+            Integer baseline = baselineRipe.get(ownerId);
+            Integer allowed  = allowedSteals.get(ownerId);
+            Integer stolen   = stolenSoFar.get(ownerId);
+            if (baseline == null || allowed == null || stolen == null) {
+                // 这一轮还没开始偷，但 ripe>=4，可以开始偷
+                return true;
+            }
+            return stolen < allowed;
+        }
+    }
+
     // ===== 推送 & 广播 =====
     private void pushTo(int playerId, Object payload) {
         ClientConn cc = conns.get(playerId);
@@ -570,9 +761,7 @@ public class Server {
 
     /** 广播某个农场的单格更新：推给 owner + 所有正在看他农场的观众 */
     private void broadcastFarmUpdate(int ownerId, Object payload) {
-        // 发给本人
         pushTo(ownerId, payload);
-        // 发给所有正在看这个农场的人
         Set<Integer> vs = viewersByOwner.get(ownerId);
         if (vs != null) {
             for (Integer vid : vs) {
@@ -737,7 +926,8 @@ public class Server {
                                 if (ff.board[rr][cc] == PlotState.GROWING) {
                                     ff.board[rr][cc] = PlotState.RIPE;
                                     ff.ripeAt[rr][cc] = null;
-                                    broadcastFarmUpdate(pid, new PushCellUpdate(pid, rr, cc, PlotState.RIPE, pp.getCoins()));
+                                    broadcastFarmUpdate(pid,
+                                            new PushCellUpdate(pid, rr, cc, PlotState.RIPE, pp.getCoins()));
                                     saveFarmsAsync();
                                 }
                             }
@@ -755,7 +945,6 @@ public class Server {
     private void loadFarmsFromDisk() {
         try {
             if (!Files.exists(FARMS_FILE)) {
-                // 没有 farms.json：为已有玩家建空农场
                 for (Player p : playersById.values()) {
                     farms.putIfAbsent(p.getId(), new Farm());
                 }
@@ -772,7 +961,6 @@ public class Server {
                 farms.put(pf.playerId, f);
                 count++;
             }
-            // 确保每个已知玩家都有农场
             for (Player p : playersById.values()) {
                 farms.putIfAbsent(p.getId(), new Farm());
             }
@@ -795,7 +983,7 @@ public class Server {
             for (var e : farms.entrySet()) {
                 int pid = e.getKey();
                 Farm f = e.getValue();
-                synchronized (f) { // 避免与游戏操作竞态
+                synchronized (f) {
                     list.add(toPersistFarm(pid, f));
                 }
             }

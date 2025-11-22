@@ -2,12 +2,12 @@
   "id" : 1,
   "name" : "jbh",
   "password" : "123123",
-  "coins" : 100
+  "coins" : 230
 }, {
   "id" : 4,
   "name" : "bbb",
   "password" : "123123",
-  "coins" : 100
+  "coins" : 140
 }, {
   "id" : 3,
   "name" : "hhh",
@@ -17,5 +17,5 @@
   "id" : 2,
   "name" : "jjj",
   "password" : "123123",
-  "coins" : 290
+  "coins" : 0
 } ]

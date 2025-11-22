@@ -32,7 +32,6 @@ public class Controller {
     @FXML private Button stealButton;
     @FXML private Button myFarmButton;
 
-    // 好友面板
     @FXML private VBox friendsPane;
     @FXML private TextField friendSearchField;
     @FXML private Button friendAddButton;
@@ -40,7 +39,7 @@ public class Controller {
 
     // ====== 本地状态 ======
     /** 当前登录玩家（我自己） */
-    private Player selfPlayer;
+    Player selfPlayer;
     /** 当前界面正在显示的农场视图（owner 可以是自己或好友） */
     Game game;
 
@@ -49,10 +48,14 @@ public class Controller {
     private String statusMessage = "Ready.";
     private int selectedRow = -1, selectedCol = -1;
 
-    /** 当前界面正在看的农场主人 id（等于 game.getPlayer().getId()） */
-    private int currentOwnerId;
+    /** 当前界面正在看的农场主人 id */
+    int currentOwnerId;
+    /** 当前正在看的农场主是否在线（仅好友 farm 时有意义） */
+    private boolean currentOwnerOnline = false;
+    /** 当前农场这一轮是否还有偷菜额度 */
+    private boolean currentOwnerCanSteal = false;
 
-    // ====== 长连接（统一登录/注册/种植/收获/推送/好友/访问） ======
+    // ====== 长连接 ======
     private final LongLink longLink = new LongLink();
     private String session = "";
 
@@ -67,7 +70,6 @@ public class Controller {
         return longLink.call("LOGIN", Map.of("username", username, "password", password));
     }
 
-    /** 初始化（在登录成功、设置好 player 后调用） */
     public void init(Game game) { init(game, null); }
 
     public void init(Game game, String session) {
@@ -75,15 +77,15 @@ public class Controller {
         this.selfPlayer = game.getPlayer();
         this.session = session == null ? "" : session;
         this.currentOwnerId = selfPlayer.getId();
+        this.currentOwnerOnline = false;
+        this.currentOwnerCanSteal = false;
 
-        // 好友搜索：只有输入纯数字才允许点击 Add
         if (friendSearchField != null && friendAddButton != null) {
             friendAddButton.setDisable(true);
             friendSearchField.textProperty().addListener((o, ov, nv) ->
                     friendAddButton.setDisable(nv == null || !nv.matches("\\d+")));
         }
 
-        // 好友列表：双击访问好友农场
         if (friendsList != null) {
             friendsList.setOnMouseClicked(e -> {
                 if (e.getButton() == MouseButton.PRIMARY && e.getClickCount() == 2) {
@@ -100,18 +102,22 @@ public class Controller {
 
         createBoard();
         setPlayerInfoLabels();
+        updateButtonsForOwnFarm();
         refreshBoard();
         startRefreshTicker();
     }
 
-    /**
-     * 登录后由 Application 调用，应用“自己农场”的快照并刷新 UI。
-     */
+    /** 登录后应用“自己农场”快照并刷新 UI */
     public void applySnapshotFromServer(int rows, int cols, String[] cells, int coins) {
         if (game == null) return;
         game.setPlayer(selfPlayer);
         currentOwnerId = selfPlayer.getId();
+        currentOwnerOnline = false;
+        currentOwnerCanSteal = false;
+
         game.applySnapshot(rows, cols, cells, coins);
+        selfPlayer.setCoins(coins);
+
         selectedRow = -1;
         selectedCol = -1;
         setPlayerInfoLabels();
@@ -119,9 +125,7 @@ public class Controller {
         refreshBoard();
     }
 
-    /**
-     * 登录后由 Application 调用：从服务器加载好友列表，显示到右侧 ListView。
-     */
+    /** 登录后加载好友列表 */
     public void loadFriendsFromServer() {
         if (selfPlayer == null) return;
         longLink.call("LIST_FRIENDS", Map.of(
@@ -154,7 +158,6 @@ public class Controller {
     }
 
     // ====== 访问农场：自己 / 好友 ======
-    /** 访问某个玩家的农场（必须是好友或自己），用于双击好友或“返回自己农场” */
     private void visitFarm(int targetId) {
         if (!longLink.isConnected()) {
             updateCoins("Not connected.");
@@ -188,7 +191,11 @@ public class Controller {
                 cellsArr = new String[0];
             }
 
-            // 构造一个“农场主人”对象（好友不需要密码/coins）
+            boolean ownerOnline = resp.path("ownerOnline").asBoolean(false);
+            boolean canSteal = resp.path("canSteal").asBoolean(false);
+            currentOwnerOnline = ownerOnline;
+            currentOwnerCanSteal = canSteal;
+
             Player owner = new Player();
             owner.setId(ownerId);
             owner.setName(ownerName);
@@ -197,18 +204,18 @@ public class Controller {
             currentOwnerId = ownerId;
 
             if (ownerId == selfPlayer.getId()) {
-                // 回到自己农场：如果服务器返回了 coins，就更新自己的金币
                 int coins = resp.path("coins").asInt(game.getCoins());
                 game.applySnapshot(rows, cols, cellsArr, coins);
                 selfPlayer.setCoins(coins);
                 updateButtonsForOwnFarm();
                 updateCoins("Back to my farm.");
             } else {
-                // 查看好友农场：只更新棋盘，不动金币；禁用种植/收割
                 game.applyBoardSnapshot(rows, cols, cellsArr);
                 updateButtonsForVisitingFriend();
-                updateCoins("Viewing " + ownerName + "'s farm (ID: " + ownerId + ")");
+                String onlineStr = ownerOnline ? "(online)" : "(offline)";
+                updateCoins("Viewing " + ownerName + "'s farm " + onlineStr);
             }
+
             selectedRow = -1;
             selectedCol = -1;
             setPlayerInfoLabels();
@@ -216,7 +223,6 @@ public class Controller {
         }));
     }
 
-    /** 供“返回自己农场”按钮调用：本质上就是 visit self */
     @FXML
     private void handleBackToMyFarm() {
         if (selfPlayer != null) {
@@ -271,16 +277,15 @@ public class Controller {
 
     private void updateCoins(String msg) {
         statusMessage = msg;
-        // 显示“自己的金币”，而不是当前 owner 的金币
         coinsLabel.setText("Coins: " + game.getCoins() + " | " + statusMessage);
     }
 
-    /** 顶部两行 label：区分“自己是谁”和“当前在看谁的农场” */
     private void setPlayerInfoLabels() {
         if (selfPlayer == null || game == null) return;
         Player owner = game.getPlayer();
         if (owner != null && owner.getId() != selfPlayer.getId()) {
-            playerNameLabel.setText("Viewing: " + owner.getName() + "'s Farm");
+            String onlineStr = currentOwnerOnline ? " (online)" : " (offline)";
+            playerNameLabel.setText("Viewing: " + owner.getName() + "'s Farm" + onlineStr);
             playerIdLabel.setText("Me: " + selfPlayer.getName() + " (ID: " + selfPlayer.getId() + ")");
         } else {
             playerNameLabel.setText("Player: " + selfPlayer.getName());
@@ -293,7 +298,6 @@ public class Controller {
     private void handlePlant() {
         if (!ensureSelection()) { updateCoins("Select a plot first."); return; }
         if (!longLink.isConnected()) { updateCoins("Not connected."); return; }
-        // 在好友农场上禁止种植
         if (game.getPlayer().getId() != selfPlayer.getId()) {
             updateCoins("You can only plant in your own farm.");
             return;
@@ -318,8 +322,11 @@ public class Controller {
             }
             int coins = resp.path("coins").asInt(game.getCoins());
             game.setCoinsFromServer(coins);
+            selfPlayer.setCoins(coins);
             String ps = resp.path("plotState").asText(null);
-            if (ps != null) game.setCellState(r, c, Game.PlotState.valueOf(ps));
+            if (ps != null && currentOwnerId == selfPlayer.getId()) {
+                game.setCellState(r, c, Game.PlotState.valueOf(ps));
+            }
             refreshBoard();
             updateCoins("Seeds planted!");
         }));
@@ -329,7 +336,6 @@ public class Controller {
     private void handleHarvest() {
         if (!ensureSelection()) { updateCoins("Select a plot first."); return; }
         if (!longLink.isConnected()) { updateCoins("Not connected."); return; }
-        // 在好友农场上禁止收割
         if (game.getPlayer().getId() != selfPlayer.getId()) {
             updateCoins("You can only harvest in your own farm.");
             return;
@@ -354,8 +360,11 @@ public class Controller {
             }
             int coins = resp.path("coins").asInt(game.getCoins());
             game.setCoinsFromServer(coins);
+            selfPlayer.setCoins(coins);
             String ps = resp.path("plotState").asText(null);
-            if (ps != null) game.setCellState(r, c, Game.PlotState.valueOf(ps));
+            if (ps != null && currentOwnerId == selfPlayer.getId()) {
+                game.setCellState(r, c, Game.PlotState.valueOf(ps));
+            }
             refreshBoard();
             updateCoins("Harvest success!");
         }));
@@ -363,8 +372,71 @@ public class Controller {
 
     @FXML
     private void handleSteal() {
-        // 以后 Step3 实现偷菜，现在还是占位
-        updateCoins("Steal: TODO (friends system).");
+        if (!ensureSelection()) { updateCoins("Select a plot first."); return; }
+        if (!longLink.isConnected()) { updateCoins("Not connected."); return; }
+
+        // 自己家不能偷
+        if (game.getPlayer().getId() == selfPlayer.getId()) {
+            updateCoins("You cannot steal in your own farm.");
+            return;
+        }
+
+        // 对方在线 / 没有额度：按钮应该已经灰掉，这里再次兜底
+        if (currentOwnerOnline) {
+            updateCoins("Owner is online, cannot steal.");
+            currentOwnerCanSteal = false;
+            updateButtonsForVisitingFriend();
+            return;
+        }
+        if (!currentOwnerCanSteal) {
+            updateCoins("This farm cannot be stolen anymore.");
+            updateButtonsForVisitingFriend();
+            return;
+        }
+
+        int r = selectedRow, c = selectedCol;
+        int ownerId = game.getPlayer().getId();
+
+        longLink.call("STEAL", Map.of(
+                "playerId", selfPlayer.getId(),
+                "targetId", ownerId,
+                "row", r, "col", c,
+                "session", session
+        )).whenComplete((resp, err) -> Platform.runLater(() -> {
+            if (err != null) {
+                updateCoins("Steal error: " + err.getMessage());
+                return;
+            }
+            boolean ok = resp.path("ok").asBoolean(false);
+            if (!ok) {
+                String msg = resp.path("msg").asText("steal failed");
+                updateCoins(msg);
+
+                String lower = msg.toLowerCase();
+                if (lower.contains("owner online")) {
+                    currentOwnerOnline = true;
+                    currentOwnerCanSteal = false;
+                } else if (lower.contains("already stolen") || lower.contains("25%")) {
+                    currentOwnerCanSteal = false;
+                }
+                updateButtonsForVisitingFriend();
+                return;
+            }
+
+            int thiefCoins = resp.path("coins").asInt(game.getCoins());
+            game.setCoinsFromServer(thiefCoins);
+            selfPlayer.setCoins(thiefCoins);
+
+            // 服务器会在 resp 中给出这一轮是否还能继续偷
+            if (resp.has("canSteal")) {
+                currentOwnerCanSteal = resp.path("canSteal").asBoolean(false);
+            }
+
+            // 地块变化由 PUSH_CELL_UPDATE 统一更新；这里不强行改
+            updateButtonsForVisitingFriend();
+            refreshBoard();
+            updateCoins("Steal success!");
+        }));
     }
 
     @FXML
@@ -380,7 +452,6 @@ public class Controller {
         addFriendById(targetId);
     }
 
-    /** 实际执行 ADD_FRIEND 协议 */
     private void addFriendById(int targetId) {
         if (!longLink.isConnected()) {
             updateCoins("Not connected.");
@@ -431,29 +502,27 @@ public class Controller {
 
     /** 当前在“自己家”时的按钮状态 */
     private void updateButtonsForOwnFarm() {
-        // 自己家可以种/收
         plantButton.setDisable(false);
         harvestButton.setDisable(false);
 
-        // 自己家不能偷自己，也没必要点 My Farm
-        if (stealButton != null)    stealButton.setDisable(true);
-        if (myFarmButton != null)   myFarmButton.setDisable(true);
+        if (stealButton != null)  stealButton.setDisable(true);
+        if (myFarmButton != null) myFarmButton.setDisable(true);
     }
 
-    /** 当前在“好友家”时的按钮状态 */
+    /** 当前在“好友家”时的按钮状态（根据在线&偷菜配额控制 Steal） */
     private void updateButtonsForVisitingFriend() {
-        // 好友家不能种/收
         plantButton.setDisable(true);
         harvestButton.setDisable(true);
 
-        // 好友家可以偷菜，也可以点 My Farm 回自己家
-        if (stealButton != null)    stealButton.setDisable(false);
-        if (myFarmButton != null)   myFarmButton.setDisable(false);
+        if (myFarmButton != null) myFarmButton.setDisable(false);
+
+        if (stealButton != null) {
+            boolean enableSteal = !currentOwnerOnline && currentOwnerCanSteal;
+            stealButton.setDisable(!enableSteal);
+        }
     }
 
-
     private Integer parseIdFromFriendItem(String item) {
-        // 解析 "name (ID: 3)" 里的 3
         int idx = item.lastIndexOf("ID:");
         if (idx < 0) return null;
         int start = idx + 3;
@@ -480,7 +549,7 @@ public class Controller {
 
         void connect(String host, int port) throws IOException {
             socket = new Socket(host, port);
-            socket.setSoTimeout(0); // 长连
+            socket.setSoTimeout(0);
             out = new BufferedWriter(new OutputStreamWriter(socket.getOutputStream(), StandardCharsets.UTF_8));
             in  = new BufferedReader(new InputStreamReader(socket.getInputStream(), StandardCharsets.UTF_8));
             connected = true;
@@ -576,11 +645,12 @@ public class Controller {
             if (row < 0 || col < 0 || ps == null) return;
 
             Platform.runLater(() -> {
-                // 如果是“我自己的农场”更新：无论当前在看谁，都更新自己的金币
+                // 如果是我自己的农场更新：无论当前在看谁，都更新我的金币
                 if (ownerId == controller.selfPlayer.getId()) {
                     controller.game.setCoinsFromServer(coins);
+                    controller.selfPlayer.setCoins(coins);
                 }
-                // 如果当前正在看的正是这个农场（ownerId == currentOwnerId），才更新棋盘
+                // 如果当前正在看的正是这个农场，才更新棋盘
                 if (ownerId == controller.currentOwnerId) {
                     controller.game.setCellState(row, col, Game.PlotState.valueOf(ps));
                 }

@@ -21,16 +21,16 @@
     "state" : "RIPE",
     "ripeAt" : null
   }, {
+    "state" : "EMPTY",
+    "ripeAt" : null
+  }, {
+    "state" : "EMPTY",
+    "ripeAt" : null
+  }, {
+    "state" : "EMPTY",
+    "ripeAt" : null
+  }, {
     "state" : "RIPE",
-    "ripeAt" : null
-  }, {
-    "state" : "EMPTY",
-    "ripeAt" : null
-  }, {
-    "state" : "EMPTY",
-    "ripeAt" : null
-  }, {
-    "state" : "EMPTY",
     "ripeAt" : null
   }, {
     "state" : "EMPTY",
@@ -56,13 +56,28 @@
   "rows" : 4,
   "cols" : 4,
   "cells" : [ {
-    "state" : "EMPTY",
+    "state" : "RIPE",
     "ripeAt" : null
   }, {
     "state" : "EMPTY",
     "ripeAt" : null
   }, {
+    "state" : "RIPE",
+    "ripeAt" : null
+  }, {
+    "state" : "RIPE",
+    "ripeAt" : null
+  }, {
+    "state" : "RIPE",
+    "ripeAt" : null
+  }, {
     "state" : "EMPTY",
+    "ripeAt" : null
+  }, {
+    "state" : "RIPE",
+    "ripeAt" : null
+  }, {
+    "state" : "RIPE",
     "ripeAt" : null
   }, {
     "state" : "RIPE",
@@ -77,25 +92,10 @@
     "state" : "EMPTY",
     "ripeAt" : null
   }, {
-    "state" : "EMPTY",
+    "state" : "RIPE",
     "ripeAt" : null
   }, {
-    "state" : "EMPTY",
-    "ripeAt" : null
-  }, {
-    "state" : "EMPTY",
-    "ripeAt" : null
-  }, {
-    "state" : "EMPTY",
-    "ripeAt" : null
-  }, {
-    "state" : "EMPTY",
-    "ripeAt" : null
-  }, {
-    "state" : "EMPTY",
-    "ripeAt" : null
-  }, {
-    "state" : "EMPTY",
+    "state" : "RIPE",
     "ripeAt" : null
   }, {
     "state" : "EMPTY",
