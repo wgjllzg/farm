@@ -42,6 +42,7 @@
                             <Button fx:id="plantButton"   text="Plant"   onAction="#handlePlant"/>
                             <Button fx:id="harvestButton" text="Harvest" onAction="#handleHarvest"/>
                             <Button fx:id="stealButton"   text="Steal"   onAction="#handleSteal"/>
+                            <Button fx:id="myFarmButton"  text="My Farm" onAction="#handleBackToMyFarm"/>
                         </children>
                     </HBox>
                 </children>

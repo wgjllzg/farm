@@ -17,7 +17,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 public class Server {
 
     // ===== 协议与模型 =====
-    public enum ReqType { LOGIN, SIGNUP, PLANT, HARVEST, PING, ADD_FRIEND, LIST_FRIENDS }
+    public enum ReqType { LOGIN, SIGNUP, PLANT, HARVEST, PING, ADD_FRIEND, LIST_FRIENDS, VISIT_FARM }
     public enum PlotState { EMPTY, GROWING, RIPE }
 
     /** 统一响应外壳（同一条长连上的 request/response） */
@@ -27,46 +27,44 @@ public class Server {
         public boolean ok;
         public String msg;
 
-        // 常用负载
-        public Integer playerId;
-        public Integer coins;
+        // 通用字段
+        public Integer playerId;     // 发起请求的人
+        public Integer coins;        // 一般返回“自己的金币”
         public String session;
         public String playerName;
+
+        // 农场单格操作
         public Integer row, col;
         public String plotState;
 
-        // ★ 农场快照字段（登录成功时一起返回）
-        public Integer rows;
-        public Integer cols;
-        public List<String> cells;  // 长度 = rows * cols，按行展开
+        // 农场快照
+        public Integer rows, cols;
+        public List<String> cells;
 
-        // ★ 好友相关字段
-        public Integer friendId;      // 新增的好友 id（ADD_FRIEND）
-        public String friendName;     // 新增的好友名字
-        public List<FriendInfo> friends; // 好友列表（LIST_FRIENDS）
+        // 好友相关
+        public Integer friendId;
+        public String friendName;
+        public List<FriendInfo> friends;
 
+        // 访问农场相关
+        public Integer targetId;
+        public String targetName;
     }
 
-    /** ★ 好友信息（LIST_FRIENDS 返回用） */
-    static class FriendInfo {
-        public int id;
-        public String name;
-        public FriendInfo() {}
-        public FriendInfo(int id, String name) { this.id = id; this.name = name; }
-    }
-
-    /** 主动推送：单格更新（成熟/收获） */
+    /** 主动推送：单格更新（成熟/收获/播种） */
     static class PushCellUpdate {
         public String type = "PUSH_CELL_UPDATE";
-        public Integer playerId;
+        public Integer playerId;     // 农场主人 id（很重要）
         public Integer row, col;
-        public String plotState; // EMPTY/GROWING/RIPE
-        public Integer coins;
+        public String plotState;     // EMPTY/GROWING/RIPE
+        public Integer coins;        // 农场主自己的金币（用于本人更新）
 
         public PushCellUpdate() {}
-        public PushCellUpdate(int pid, int r, int c, PlotState ps, int coins){
-            this.playerId = pid; this.row = r; this.col = c;
-            this.plotState = ps.name(); this.coins = coins;
+        public PushCellUpdate(int ownerId, int r, int c, PlotState ps, int coins){
+            this.playerId = ownerId;
+            this.row = r; this.col = c;
+            this.plotState = ps.name();
+            this.coins = coins;
         }
     }
 
@@ -98,8 +96,14 @@ public class Server {
     private final Map<Integer, Farm> farms = new ConcurrentHashMap<>();
     /** playerId -> 长连连接，用于主动推送 */
     private final Map<Integer, ClientConn> conns = new ConcurrentHashMap<>();
-    /** ★ playerId -> 好友集合（双向存储） */
+
+    /** 好友关系：playerId -> 好友 id 集合 */
     private final Map<Integer, Set<Integer>> friends = new ConcurrentHashMap<>();
+
+    /** 观众关系：ownerId -> 当前正在看这个人农场的 viewerId 集合（不含本人） */
+    private final Map<Integer, Set<Integer>> viewersByOwner = new ConcurrentHashMap<>();
+    /** viewerId -> 当前正在看的 ownerId（可以是自己或别人） */
+    private final Map<Integer, Integer> currentViewByViewer = new ConcurrentHashMap<>();
 
     private final AtomicInteger nextId = new AtomicInteger(1);
 
@@ -108,10 +112,10 @@ public class Server {
             .configure(MapperFeature.ACCEPT_CASE_INSENSITIVE_ENUMS, true);
 
     // 持久化文件
-    private static final Path DATA_DIR       = Paths.get("data");
-    private static final Path PLAYERS_FILE   = DATA_DIR.resolve("players.json");
-    private static final Path FARMS_FILE     = DATA_DIR.resolve("farms.json");
-    private static final Path FRIENDS_FILE   = DATA_DIR.resolve("friends.json"); // ★ 新增好友文件
+    private static final Path DATA_DIR     = Paths.get("data");
+    private static final Path PLAYERS_FILE = DATA_DIR.resolve("players.json");
+    private static final Path FARMS_FILE   = DATA_DIR.resolve("farms.json");
+    private static final Path FRIENDS_FILE = DATA_DIR.resolve("friends.json");
     private final ExecutorService diskWriter = Executors.newSingleThreadExecutor();
 
     public Server(int port) { this.port = port; }
@@ -120,8 +124,7 @@ public class Server {
     public void start() throws IOException {
         loadPlayersFromDisk();
         loadFarmsFromDisk();
-        loadFriendsFromDisk();  // ★ 加载好友
-
+        loadFriendsFromDisk();
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             flushPlayersSync();
             flushFarmsSync();
@@ -153,7 +156,7 @@ public class Server {
                 line = line.trim();
                 if (line.isEmpty()) continue;
 
-                // —— 日志：收到原始指令（不脱敏，应你需求）——
+                // —— 日志：收到原始指令 ——
                 System.out.println("[RECV] " + line);
 
                 JsonNode node = mapper.readTree(line);
@@ -161,7 +164,7 @@ public class Server {
                 String type = optText(node, "type");
                 if (type == null) {
                     RespShell bad = new RespShell();
-                    bad.requestId = requestId; // 可能为 null
+                    bad.requestId = requestId;
                     bad.ok = false; bad.msg = "bad request: missing type";
                     String outJson = mapper.writeValueAsString(bad);
                     safeWrite(out, outJson);
@@ -234,16 +237,16 @@ public class Server {
                         safeWrite(out, outJson);
                         System.out.println("[SEND] " + outJson);
                     }
-                    case ADD_FRIEND -> { // ★ 按 ID 添加好友
+                    case ADD_FRIEND -> {
                         Integer pid = optInt(node, "playerId");
-                        Integer targetId = optInt(node, "targetId"); // 客户端发送自己的 playerId + targetId
+                        Integer targetId = optInt(node, "targetId");
                         resp = doAddFriend(pid, targetId);
                         resp.requestId = requestId;
                         String outJson = mapper.writeValueAsString(resp);
                         safeWrite(out, outJson);
                         System.out.println("[SEND] " + outJson);
                     }
-                    case LIST_FRIENDS -> { // ★ 拉取好友列表
+                    case LIST_FRIENDS -> {
                         Integer pid = optInt(node, "playerId");
                         resp = doListFriends(pid);
                         resp.requestId = requestId;
@@ -251,7 +254,15 @@ public class Server {
                         safeWrite(out, outJson);
                         System.out.println("[SEND] " + outJson);
                     }
-                    case PING -> { /* 已在上面处理，不会到这里 */ }
+                    case VISIT_FARM -> {
+                        Integer pid = optInt(node, "playerId");
+                        Integer targetId = optInt(node, "targetId");
+                        resp = doVisitFarm(pid, targetId);
+                        resp.requestId = requestId;
+                        String outJson = mapper.writeValueAsString(resp);
+                        safeWrite(out, outJson);
+                        System.out.println("[SEND] " + outJson);
+                    }
                 }
             }
             System.out.println("[INFO] client closed");
@@ -261,7 +272,18 @@ public class Server {
             e.printStackTrace();
         } finally {
             if (conn != null && conn.playerId != null) {
-                conns.remove(conn.playerId, conn);
+                int viewerId = conn.playerId;
+                conns.remove(viewerId, conn);
+
+                // 清理观众关系
+                Integer owner = currentViewByViewer.remove(viewerId);
+                if (owner != null) {
+                    Set<Integer> vs = viewersByOwner.get(owner);
+                    if (vs != null) {
+                        vs.remove(viewerId);
+                        if (vs.isEmpty()) viewersByOwner.remove(owner);
+                    }
+                }
             }
         }
     }
@@ -285,18 +307,27 @@ public class Server {
         if (isBlank(username) || isBlank(password)) { r.ok=false; r.msg="bad request"; return r; }
         String key = username.toLowerCase(Locale.ROOT);
 
-        Player created = new Player(nextId.getAndIncrement(), username, password, 100);
+        Player created = new Player();
+        created.setId(nextId.getAndIncrement());
+        created.setName(username);
+        created.setCoins(100);
+        // 简化：密码明文存
+        try {
+            var pwdField = Player.class.getDeclaredField("password");
+            pwdField.setAccessible(true);
+            pwdField.set(created, password);
+        } catch (Exception ignore) {}
+
         Player prev = players.putIfAbsent(key, created);
         if (prev != null) { r.ok=false; r.msg="player exists"; return r; }
 
         playersById.put(created.getId(), created);
         farms.putIfAbsent(created.getId(), new Farm());
-        // ★ 为新玩家建空好友集合
         friends.putIfAbsent(created.getId(), ConcurrentHashMap.newKeySet());
 
         savePlayersAsync();
         saveFarmsAsync();
-        saveFriendsAsync(); // ★
+        saveFriendsAsync();
 
         r.ok = true; r.msg="signup ok";
         return r;
@@ -308,38 +339,21 @@ public class Server {
         Player p = players.get(username.toLowerCase(Locale.ROOT));
         if (p == null) { r.ok=false; r.msg="no such player"; return r; }
         if (!p.passwordEquals(password)) { r.ok=false; r.msg="wrong password"; return r; }
-
-        // 确保有农场
         farms.putIfAbsent(p.getId(), new Farm());
-        Farm f = farms.get(p.getId());
-
-        // 确保有好友集合
         friends.putIfAbsent(p.getId(), ConcurrentHashMap.newKeySet());
 
-        // 生成 session（暂时只回显，不强校验）
-        String session = UUID.randomUUID().toString();
-
-        // 基本玩家信息
-        r.ok = true;
-        r.msg = "login ok";
-        r.playerId   = p.getId();
+        String session = UUID.randomUUID().toString(); // 先占位（未校验）
+        r.ok = true; r.msg="login ok";
+        r.playerId = p.getId();
         r.playerName = p.getName();
-        r.coins      = p.getCoins();
-        r.session    = session;
+        r.coins = p.getCoins();
+        r.session = session;
 
-        // 附带当前农场快照：rows / cols / cells
-        if (f != null) {
-            r.rows = f.rows;
-            r.cols = f.cols;
-            r.cells = new ArrayList<>(f.rows * f.cols);
-            for (int rr = 0; rr < f.rows; rr++) {
-                for (int cc = 0; cc < f.cols; cc++) {
-                    PlotState ps = f.board[rr][cc];
-                    if (ps == null) ps = PlotState.EMPTY;
-                    r.cells.add(ps.name());  // "EMPTY"/"GROWING"/"RIPE"
-                }
-            }
-        }
+        // 附带自己的农场快照
+        Farm f = farms.get(p.getId());
+        r.rows = f.rows;
+        r.cols = f.cols;
+        r.cells = farmToCells(f);
 
         return r;
     }
@@ -357,13 +371,14 @@ public class Server {
             if (f.board[row][col] != PlotState.EMPTY) { r.ok=false; r.msg="plot occupied"; return r; }
             if (p.getCoins() < 10) { r.ok=false; r.msg="not enough coins"; return r; }
 
+            // 1. 扣钱 + 本地改成 GROWING
             p.setCoins(p.getCoins() - 10);
             f.board[row][col] = PlotState.GROWING;
             long now = System.currentTimeMillis();
             long ripetime = now + 5000;
             f.ripeAt[row][col] = ripetime;
 
-            // 5s后成熟
+            // 2. 挂成熟定时器（成熟时会广播 RIPE）
             final int rr=row, cc=col, pid=playerId;
             scheduler.schedule(() -> {
                 Farm ff = farms.get(pid);
@@ -373,15 +388,22 @@ public class Server {
                     if (ff.board[rr][cc] == PlotState.GROWING) {
                         ff.board[rr][cc] = PlotState.RIPE;
                         ff.ripeAt[rr][cc] = null;
-                        pushTo(pid, new PushCellUpdate(pid, rr, cc, PlotState.RIPE, pp.getCoins()));
+                        // 成熟时广播 RIPE
+                        broadcastFarmUpdate(pid, new PushCellUpdate(pid, rr, cc, PlotState.RIPE, pp.getCoins()));
                         saveFarmsAsync();
                     }
                 }
             }, ripetime - now, TimeUnit.MILLISECONDS);
 
+            // 3. 持久化
             savePlayersAsync(); // 扣钱
             saveFarmsAsync();   // 改状态 + 记录 ripeAt
 
+            // ✅ 4. 立刻广播 GROWING 给所有 viewer（包括本人）
+            broadcastFarmUpdate(playerId,
+                    new PushCellUpdate(playerId, row, col, PlotState.GROWING, p.getCoins()));
+
+            // 5. 给发起者的 RESP（照旧）
             r.ok = true; r.msg="plant ok";
             r.playerId = playerId; r.row=row; r.col=col;
             r.plotState=PlotState.GROWING.name(); r.coins=p.getCoins();
@@ -412,83 +434,151 @@ public class Server {
             r.playerId=playerId; r.row=row; r.col=col;
             r.plotState=PlotState.EMPTY.name(); r.coins=p.getCoins();
 
-            pushTo(playerId, new PushCellUpdate(playerId, row, col, PlotState.EMPTY, p.getCoins()));
+            broadcastFarmUpdate(playerId, new PushCellUpdate(playerId, row, col, PlotState.EMPTY, p.getCoins()));
             return r;
         }
     }
 
-    // ★ 添加好友
+    // ===== 好友逻辑 =====
+    public static class FriendInfo {
+        public int id;
+        public String name;
+        public FriendInfo() {}
+        public FriendInfo(int id, String name) { this.id = id; this.name = name; }
+    }
+
     private RespShell doAddFriend(Integer playerId, Integer targetId) {
         RespShell r = new RespShell();
-        if (playerId == null || targetId == null) {
-            r.ok = false; r.msg = "bad request"; return r;
-        }
+        if (playerId == null || targetId == null) { r.ok=false; r.msg="bad request"; return r; }
         if (Objects.equals(playerId, targetId)) {
-            r.ok = false; r.msg = "cannot add yourself"; return r;
+            r.ok=false; r.msg="cannot add yourself"; return r;
         }
-        Player self = playersById.get(playerId);
-        Player target = playersById.get(targetId);
-        if (self == null) { r.ok=false; r.msg="no such player"; return r; }
-        if (target == null) { r.ok=false; r.msg="no such player"; return r; }
-
-        friends.putIfAbsent(playerId,   ConcurrentHashMap.newKeySet());
-        friends.putIfAbsent(targetId,   ConcurrentHashMap.newKeySet());
+        Player me = playersById.get(playerId);
+        Player other = playersById.get(targetId);
+        if (me == null || other == null) {
+            r.ok=false; r.msg="no such player"; return r;
+        }
+        friends.putIfAbsent(playerId, ConcurrentHashMap.newKeySet());
+        friends.putIfAbsent(targetId, ConcurrentHashMap.newKeySet());
         Set<Integer> mySet = friends.get(playerId);
-        Set<Integer> tgSet = friends.get(targetId);
+        Set<Integer> hisSet = friends.get(targetId);
 
         if (mySet.contains(targetId)) {
-            r.ok = false; r.msg = "already friend"; return r;
+            r.ok=false; r.msg="already friends"; return r;
         }
 
         mySet.add(targetId);
-        tgSet.add(playerId);
+        hisSet.add(playerId);
         saveFriendsAsync();
 
-        r.ok = true;
-        r.msg = "friend added";
+        r.ok = true; r.msg="add friend ok";
         r.playerId = playerId;
         r.friendId = targetId;
-        r.friendName = target.getName();
+        r.friendName = other.getName();
         return r;
     }
 
-    // ★ 列出好友
     private RespShell doListFriends(Integer playerId) {
         RespShell r = new RespShell();
-        if (playerId == null) {
-            r.ok = false; r.msg = "bad request"; return r;
-        }
-        Player self = playersById.get(playerId);
-        if (self == null) { r.ok=false; r.msg="no such player"; return r; }
+        if (playerId == null) { r.ok=false; r.msg="bad request"; return r; }
+        Player me = playersById.get(playerId);
+        if (me == null) { r.ok=false; r.msg="no such player"; return r; }
 
-        friends.putIfAbsent(playerId, ConcurrentHashMap.newKeySet());
-        Set<Integer> mySet = friends.get(playerId);
-
+        Set<Integer> ids = friends.getOrDefault(playerId, Collections.emptySet());
         List<FriendInfo> list = new ArrayList<>();
-        for (Integer fid : mySet) {
-            Player fp = playersById.get(fid);
-            if (fp != null) {
-                list.add(new FriendInfo(fid, fp.getName()));
+        for (Integer fid : ids) {
+            Player p = playersById.get(fid);
+            if (p != null) {
+                list.add(new FriendInfo(p.getId(), p.getName()));
             }
         }
-
-        r.ok = true;
-        r.msg = "friends ok";
+        r.ok = true; r.msg = "list friends ok";
         r.playerId = playerId;
         r.friends = list;
         return r;
     }
 
-    // ===== 推送 =====
+    // ===== 访问农场逻辑 =====
+    private RespShell doVisitFarm(Integer playerId, Integer targetId) {
+        RespShell r = new RespShell();
+        if (playerId == null || targetId == null) { r.ok=false; r.msg="bad request"; return r; }
+        Player viewer = playersById.get(playerId);
+        Player owner  = playersById.get(targetId);
+        if (viewer == null || owner == null) { r.ok=false; r.msg="no such player"; return r; }
+
+        // 必须是自己或者好友
+        if (!Objects.equals(playerId, targetId)) {
+            Set<Integer> myFriends = friends.getOrDefault(playerId, Collections.emptySet());
+            if (!myFriends.contains(targetId)) {
+                r.ok=false; r.msg="not friends"; return r;
+            }
+        }
+
+        farms.putIfAbsent(targetId, new Farm());
+        Farm f = farms.get(targetId);
+
+        r.ok = true; r.msg = "visit ok";
+        r.playerId = playerId;
+        r.targetId = targetId;
+        r.targetName = owner.getName();
+        if (Objects.equals(playerId, targetId)) {
+            r.coins = viewer.getCoins(); // 回到自己农场时返回自己的金币
+        }
+        r.rows = f.rows;
+        r.cols = f.cols;
+        r.cells = farmToCells(f);
+
+        // 更新“谁在看谁”
+        Integer oldOwner = currentViewByViewer.put(playerId, targetId);
+        if (oldOwner != null && !oldOwner.equals(targetId)) {
+            Set<Integer> vs = viewersByOwner.get(oldOwner);
+            if (vs != null) {
+                vs.remove(playerId);
+                if (vs.isEmpty()) viewersByOwner.remove(oldOwner);
+            }
+        }
+        if (!Objects.equals(playerId, targetId)) {
+            viewersByOwner
+                    .computeIfAbsent(targetId, k -> ConcurrentHashMap.newKeySet())
+                    .add(playerId);
+        }
+        return r;
+    }
+
+    private List<String> farmToCells(Farm f) {
+        List<String> list = new ArrayList<>(f.rows * f.cols);
+        for (int r=0;r<f.rows;r++) {
+            for (int c=0;c<f.cols;c++) {
+                list.add(f.board[r][c].name());
+            }
+        }
+        return list;
+    }
+
+    // ===== 推送 & 广播 =====
     private void pushTo(int playerId, Object payload) {
         ClientConn cc = conns.get(playerId);
         if (cc == null) return;
         try {
             String line = mapper.writeValueAsString(payload);
             cc.safeWrite(line);
-            System.out.println("[PUSH] " + line);
+            System.out.println("[PUSH] to " + playerId + " " + line);
         } catch (JsonProcessingException e) {
             e.printStackTrace();
+        }
+    }
+
+    /** 广播某个农场的单格更新：推给 owner + 所有正在看他农场的观众 */
+    private void broadcastFarmUpdate(int ownerId, Object payload) {
+        // 发给本人
+        pushTo(ownerId, payload);
+        // 发给所有正在看这个农场的人
+        Set<Integer> vs = viewersByOwner.get(ownerId);
+        if (vs != null) {
+            for (Integer vid : vs) {
+                if (vid == null || vid == ownerId) continue;
+                pushTo(vid, payload);
+            }
         }
     }
 
@@ -541,7 +631,16 @@ public class Server {
             List<PersistPlayer> list = mapper.readValue(bytes, new TypeReference<List<PersistPlayer>>() {});
             int maxId = 0;
             for (PersistPlayer pp : list) {
-                Player p = new Player(pp.id, pp.name, pp.password, pp.coins);
+                Player p = new Player();
+                p.setId(pp.id);
+                p.setName(pp.name);
+                p.setCoins(pp.coins);
+                try {
+                    var pwdField = Player.class.getDeclaredField("password");
+                    pwdField.setAccessible(true);
+                    pwdField.set(p, pp.password);
+                } catch (Exception ignore) {}
+
                 players.put(pp.name.toLowerCase(Locale.ROOT), p);
                 playersById.put(p.getId(), p);
                 if (pp.id > maxId) maxId = pp.id;
@@ -638,7 +737,7 @@ public class Server {
                                 if (ff.board[rr][cc] == PlotState.GROWING) {
                                     ff.board[rr][cc] = PlotState.RIPE;
                                     ff.ripeAt[rr][cc] = null;
-                                    pushTo(pid, new PushCellUpdate(pid, rr, cc, PlotState.RIPE, pp.getCoins()));
+                                    broadcastFarmUpdate(pid, new PushCellUpdate(pid, rr, cc, PlotState.RIPE, pp.getCoins()));
                                     saveFarmsAsync();
                                 }
                             }
@@ -717,41 +816,32 @@ public class Server {
     }
 
     // ===== friends.json 持久化 =====
-    public static class PersistFriends {
+    public static class PersistFriendList {
         public int playerId;
         public List<Integer> friends;
-        public PersistFriends() {}
-        public PersistFriends(int playerId, List<Integer> friends) {
-            this.playerId = playerId; this.friends = friends;
+        public PersistFriendList() {}
+        public PersistFriendList(int playerId, List<Integer> friends) {
+            this.playerId = playerId;
+            this.friends = friends;
         }
     }
 
     private void loadFriendsFromDisk() {
         try {
             if (!Files.exists(FRIENDS_FILE)) {
-                // 没有 friends.json：为已有玩家建空好友集合
-                for (Player p : playersById.values()) {
-                    friends.putIfAbsent(p.getId(), ConcurrentHashMap.newKeySet());
-                }
-                System.out.println("[LOAD] no friends.json, start with empty friend sets for players=" + playersById.size());
+                System.out.println("[LOAD] no friends.json, start empty friends.");
                 return;
             }
             byte[] bytes = Files.readAllBytes(FRIENDS_FILE);
             if (bytes.length == 0) return;
 
-            List<PersistFriends> list = mapper.readValue(bytes, new TypeReference<List<PersistFriends>>() {});
-            int count = 0;
-            for (PersistFriends pf : list) {
+            List<PersistFriendList> list = mapper.readValue(bytes, new TypeReference<List<PersistFriendList>>() {});
+            for (PersistFriendList pfl : list) {
                 Set<Integer> set = ConcurrentHashMap.newKeySet();
-                if (pf.friends != null) set.addAll(pf.friends);
-                friends.put(pf.playerId, set);
-                count++;
+                if (pfl.friends != null) set.addAll(pfl.friends);
+                friends.put(pfl.playerId, set);
             }
-            // 确保每个已有玩家都有记录
-            for (Player p : playersById.values()) {
-                friends.putIfAbsent(p.getId(), ConcurrentHashMap.newKeySet());
-            }
-            System.out.println("[LOAD] friends entries=" + count + ", playersWithFriends=" + friends.size());
+            System.out.println("[LOAD] friends for players=" + friends.size());
         } catch (Exception e) {
             System.err.println("[LOAD] friends failed: " + e.getMessage());
             e.printStackTrace();
@@ -766,11 +856,11 @@ public class Server {
         try {
             Files.createDirectories(DATA_DIR);
 
-            List<PersistFriends> list = new ArrayList<>(friends.size());
+            List<PersistFriendList> list = new ArrayList<>();
             for (var e : friends.entrySet()) {
                 int pid = e.getKey();
                 Set<Integer> set = e.getValue();
-                list.add(new PersistFriends(pid, new ArrayList<>(set)));
+                list.add(new PersistFriendList(pid, new ArrayList<>(set)));
             }
 
             Path tmp = FRIENDS_FILE.resolveSibling(FRIENDS_FILE.getFileName() + ".tmp");
@@ -781,7 +871,7 @@ public class Server {
             Files.move(tmp, FRIENDS_FILE, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
             try (FileChannel dir = FileChannel.open(DATA_DIR, StandardOpenOption.READ)) { dir.force(true); }
 
-            System.out.println("[SAVE] friends=" + list.size() + " -> " + FRIENDS_FILE);
+            System.out.println("[SAVE] friends for players=" + list.size() + " -> " + FRIENDS_FILE);
         } catch (Exception e) {
             System.err.println("[SAVE] friends failed: " + e.getMessage());
             e.printStackTrace();

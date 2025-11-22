@@ -18,6 +18,59 @@
     "state" : "EMPTY",
     "ripeAt" : null
   }, {
+    "state" : "RIPE",
+    "ripeAt" : null
+  }, {
+    "state" : "RIPE",
+    "ripeAt" : null
+  }, {
+    "state" : "EMPTY",
+    "ripeAt" : null
+  }, {
+    "state" : "EMPTY",
+    "ripeAt" : null
+  }, {
+    "state" : "EMPTY",
+    "ripeAt" : null
+  }, {
+    "state" : "EMPTY",
+    "ripeAt" : null
+  }, {
+    "state" : "EMPTY",
+    "ripeAt" : null
+  }, {
+    "state" : "EMPTY",
+    "ripeAt" : null
+  }, {
+    "state" : "EMPTY",
+    "ripeAt" : null
+  }, {
+    "state" : "EMPTY",
+    "ripeAt" : null
+  }, {
+    "state" : "RIPE",
+    "ripeAt" : null
+  } ]
+}, {
+  "playerId" : 2,
+  "rows" : 4,
+  "cols" : 4,
+  "cells" : [ {
+    "state" : "EMPTY",
+    "ripeAt" : null
+  }, {
+    "state" : "EMPTY",
+    "ripeAt" : null
+  }, {
+    "state" : "EMPTY",
+    "ripeAt" : null
+  }, {
+    "state" : "RIPE",
+    "ripeAt" : null
+  }, {
+    "state" : "EMPTY",
+    "ripeAt" : null
+  }, {
     "state" : "EMPTY",
     "ripeAt" : null
   }, {
@@ -52,7 +105,60 @@
     "ripeAt" : null
   } ]
 }, {
-  "playerId" : 2,
+  "playerId" : 3,
+  "rows" : 4,
+  "cols" : 4,
+  "cells" : [ {
+    "state" : "EMPTY",
+    "ripeAt" : null
+  }, {
+    "state" : "EMPTY",
+    "ripeAt" : null
+  }, {
+    "state" : "EMPTY",
+    "ripeAt" : null
+  }, {
+    "state" : "EMPTY",
+    "ripeAt" : null
+  }, {
+    "state" : "EMPTY",
+    "ripeAt" : null
+  }, {
+    "state" : "EMPTY",
+    "ripeAt" : null
+  }, {
+    "state" : "EMPTY",
+    "ripeAt" : null
+  }, {
+    "state" : "EMPTY",
+    "ripeAt" : null
+  }, {
+    "state" : "EMPTY",
+    "ripeAt" : null
+  }, {
+    "state" : "EMPTY",
+    "ripeAt" : null
+  }, {
+    "state" : "EMPTY",
+    "ripeAt" : null
+  }, {
+    "state" : "EMPTY",
+    "ripeAt" : null
+  }, {
+    "state" : "EMPTY",
+    "ripeAt" : null
+  }, {
+    "state" : "EMPTY",
+    "ripeAt" : null
+  }, {
+    "state" : "EMPTY",
+    "ripeAt" : null
+  }, {
+    "state" : "EMPTY",
+    "ripeAt" : null
+  } ]
+}, {
+  "playerId" : 4,
   "rows" : 4,
   "cols" : 4,
   "cells" : [ {

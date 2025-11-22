@@ -6,12 +6,12 @@ import javafx.scene.Parent;
 import javafx.scene.Scene;
 import javafx.stage.Stage;
 
-import java.io.IOException;
 import java.util.Scanner;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
 
 /**
- * Entry point for the simplified QQ Farm demo.
+ * Entry point for the simplified QQ Farm (long-connection version).
  */
 public class Application extends javafx.application.Application {
 
@@ -25,10 +25,10 @@ public class Application extends javafx.application.Application {
         Parent root = loader.load();
         Controller controller = loader.getController();
 
-        // 建立和服务器的长连接（后面登录/种菜/收获都复用这一条）
+        // 建立和服务器的长连接
         try {
             controller.connect(HOST, PORT);
-        } catch (IOException e) {
+        } catch (Exception e) {
             System.out.println("Cannot connect to server: " + e.getMessage());
             return;
         }
@@ -36,7 +36,6 @@ public class Application extends javafx.application.Application {
         Player player = new Player();
         String session = "";
 
-        // 用来保存服务器返回的农场快照
         int snapshotRows = 4;
         int snapshotCols = 4;
         String[] snapshotCells = new String[0];
@@ -58,8 +57,8 @@ public class Application extends javafx.application.Application {
                     String password = prompt(sc, "Password:  ");
 
                     try {
-                        // 通过 Controller 的长连接调用 LOGIN
-                        JsonNode res = controller.login(username, password).get();
+                        JsonNode res = controller.login(username, password)
+                                .get(8, TimeUnit.SECONDS);
                         boolean ok = res.path("ok").asBoolean(false);
                         if (ok) {
                             int pid = res.path("playerId").asInt();
@@ -71,7 +70,6 @@ public class Application extends javafx.application.Application {
                             player.setName(pname);
                             player.setCoins(coins);
 
-                            // 读取服务器返回的农场快照 rows / cols / cells
                             snapshotRows = res.path("rows").asInt(4);
                             snapshotCols = res.path("cols").asInt(4);
                             JsonNode cellsNode = res.path("cells");
@@ -111,7 +109,8 @@ public class Application extends javafx.application.Application {
                         break;
                     }
                     try {
-                        JsonNode res = controller.signup(username, pass1).get();
+                        JsonNode res = controller.signup(username, pass1)
+                                .get(8, TimeUnit.SECONDS);
                         boolean ok = res.path("ok").asBoolean(false);
                         if (ok) {
                             System.out.println("SignUp success. You can now log in.");
@@ -135,11 +134,12 @@ public class Application extends javafx.application.Application {
         // === 进入游戏 ===
         Game game = new Game(player);
 
-        // 初始化 Controller（带上 session，后续 PLANT/HARVEST 请求会用到）
         controller.init(game, session);
 
-        // ★ 关键：用登录响应中的农场快照恢复棋盘 + 硬币
+        // 应用“自己的农场”快照
         controller.applySnapshotFromServer(snapshotRows, snapshotCols, snapshotCells, snapshotCoins);
+
+        // 登录后加载好友列表
         controller.loadFriendsFromServer();
 
         Scene scene = new Scene(root);
